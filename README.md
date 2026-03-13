@@ -31,5 +31,5 @@ This project provides a comprehensive dashboard for stock market analysis. It co
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/your-username/stock-prediction.git](https://github.com/your-username/stock-prediction.git)
+   git clone [https://github.com/ravikumar-3481/stock-prediction.git](https://github.com/ravikumar-3481/stock-prediction.git)
    cd stock-prediction
