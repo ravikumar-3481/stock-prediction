@@ -33,3 +33,26 @@ This project provides a comprehensive dashboard for stock market analysis. It co
    ```bash
    git clone [https://github.com/ravikumar-3481/stock-prediction.git](https://github.com/ravikumar-3481/stock-prediction.git)
    cd stock-prediction
+
+
+## 📊 How It Works
+
+1. **Data Acquisition**: The app pulls historical OHLC (Open, High, Low, Close) data based on the user-selected ticker and period using the `yfinance` API.
+2. **Feature Engineering**: Dates are converted into **ordinal format** to be used as numerical features, allowing the regression model to understand time-based patterns.
+3. **Training**: A `LinearRegression` model is fitted on the historical 'Close' prices to identify the prevailing price momentum.
+4. **Forecasting**: The model predicts future values by extending the linear trendline into the specified future date range.
+
+---
+
+## 👨‍💻 Author
+
+**Ravi Kumar** *B.Tech CSE (AI and Data Science) Student* AKS University, Satna
+
+---
+
+## 📄 License
+
+This project is open-source and available under the **MIT License**.
+
+
+   
