@@ -9,14 +9,14 @@ from datetime import datetime, timedelta
 # Page Configuration
 st.set_page_config(page_title="AI Stock Predictor Pro", layout="wide", page_icon="📈")
 
-st.title("📈 Real-Time Stock Trend Visualizer & ML Predictor")
+st.title("📈 Real-Time Stock Trend Visualizer ")
 st.markdown("Predicting stock trends using Linear Regression and live Yahoo Finance data.")
 
 # Sidebar - User Inputs
 st.sidebar.header("Dashboard Settings")
 ticker_symbol = st.sidebar.text_input("Enter Stock Ticker", "AAPL").upper()
-days_to_predict = st.sidebar.slider("Days to Predict into Future", 1, 30, 5)
-data_period = st.sidebar.selectbox("History Period", ("1y", "2y", "5y", "max"), index=0)
+days_to_predict = st.sidebar.slider("Days to Predict into Future", 1, 90, 5)
+data_period = st.sidebar.selectbox("History Period", ("1y", "2y", "5y", "7y", "max"), index=0)
 
 # --- DATA LOADING FUNCTION ---
 @st.cache_data(ttl=3600)  # Cache for 1 hour to prevent API rate limits
