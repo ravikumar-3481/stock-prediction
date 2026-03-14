@@ -27,7 +27,6 @@ def nav_to(page_name):
 st.markdown("""
     <style>
     /* Global Styles */
-    .stApp { background-color: #ffffff; }
     [data-testid="stSidebar"] { display: none; }
     
     /* Home Screen Styling */
@@ -41,7 +40,7 @@ st.markdown("""
         box-shadow: 0 10px 30px rgba(0,123,255,0.2);
     }
     .feature-card {
-        background: #f8f9fa;
+        background: rgba(128, 128, 128, 0.05); /* Adaptive background */
         padding: 25px;
         border-radius: 15px;
         border-left: 5px solid #007bff;
@@ -49,11 +48,11 @@ st.markdown("""
         margin-bottom: 20px;
     }
     .dev-card {
-        background: #f1f3f5;
+        background: rgba(128, 128, 128, 0.08); /* Adaptive background */
         padding: 30px;
         border-radius: 20px;
         text-align: center;
-        border: 1px solid #dee2e6;
+        border: 1px solid rgba(128, 128, 128, 0.2);
     }
     .social-btn {
         display: inline-block;
@@ -67,15 +66,6 @@ st.markdown("""
     .github { background-color: #333; }
     .linkedin { background-color: #0077b5; }
     .portfolio { background-color: #e84393; }
-    
-    /* Dashboard Styling */
-    .metric-box {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        border: 1px solid #f1f1f1;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -83,7 +73,7 @@ st.markdown("""
 @st.cache_data(ttl=600)
 def get_stock_data(ticker):
     try:
-        # Download price data (More stable than .info)
+        # Download price data
         data = yf.download(ticker, period="1y", interval="1d", progress=False)
         if data.empty:
             return None, None, "Ticker not found or no data available."
@@ -92,14 +82,40 @@ def get_stock_data(ticker):
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
-        # Attempt to get info (Fail gracefully)
+        # Attempt to get info with robust error handling for missing yfinance data
         t_obj = yf.Ticker(ticker)
         try:
-            info = t_obj.info
-        except:
-            info = {"longName": ticker, "sector": "N/A", "industry": "N/A", "longBusinessSummary": "Metadata limited by API."}
+            raw_info = t_obj.info
+            if not isinstance(raw_info, dict):
+                raw_info = {}
+        except Exception:
+            raw_info = {}
             
-        # Indicators
+        # Create safe dictionary with all required details defaulting properly
+        info = {
+            "longName": raw_info.get("longName", raw_info.get("shortName", ticker)),
+            "sector": raw_info.get("sector", "N/A"),
+            "industry": raw_info.get("industry", "N/A"),
+            "longBusinessSummary": raw_info.get("longBusinessSummary", "Company profile metadata is currently limited or unavailable via the API."),
+            "fiftyTwoWeekHigh": raw_info.get("fiftyTwoWeekHigh", 0.0),
+            "fiftyTwoWeekLow": raw_info.get("fiftyTwoWeekLow", 0.0)
+        }
+        
+        # Format Market Cap cleanly
+        mc = raw_info.get("marketCap", "N/A")
+        if isinstance(mc, (int, float)):
+            if mc >= 1e12:
+                info["marketCap"] = f"${mc/1e12:.2f}T"
+            elif mc >= 1e9:
+                info["marketCap"] = f"${mc/1e9:.2f}B"
+            elif mc >= 1e6:
+                info["marketCap"] = f"${mc/1e6:.2f}M"
+            else:
+                info["marketCap"] = f"${mc:,.2f}"
+        else:
+            info["marketCap"] = str(mc)
+            
+        # Technical Indicators
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -188,9 +204,9 @@ if st.session_state.page == "home":
                 <p><b>Ravi Kumar</b><br>Computer Science Student | AKS University</p>
                 <p>Passionate about FinTech, AI, and building data-driven web applications.</p>
                 <div style="margin-top: 20px;">
-                    <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
-                    <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
-                    <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
+                    <a href="https://github.com" target="_blank" class="social-btn github">GitHub</a>
+                    <a href="https://linkedin.com" target="_blank" class="social-btn linkedin">LinkedIn</a>
+                    <a href="#" target="_blank" class="social-btn portfolio">Portfolio</a>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -219,7 +235,7 @@ elif st.session_state.page == "analysis":
             st.info("Tip: If you see 'Rate Limited', please wait 30 seconds and refresh.")
         elif df is not None:
             # Identity
-            st.header(f"{info.get('longName', ticker)}")
+            st.header(f"{info.get('longName')}")
             
             # Key Metrics
             lp = float(df['Close'].iloc[-1])
@@ -228,17 +244,19 @@ elif st.session_state.page == "analysis":
             
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Current Price", f"${lp:,.2f}", f"{chg:+.2f} ({pct:+.2f}%)")
-            m2.metric("Market Cap", info.get('marketCap', 'N/A'))
-            m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 0):,.2f}")
-            m4.metric("52W Low", f"${info.get('fiftyTwoWeekLow', 0):,.2f}")
+            m2.metric("Market Cap", info.get('marketCap'))
+            m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh'):,.2f}")
+            m4.metric("52W Low", f"${info.get('fiftyTwoWeekLow'):,.2f}")
             
             # Graphs
             st.subheader("Technical Analysis Suite")
+            
+            # Adapt Plotly to current theme (remove white template so it's transparent)
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color="#007bff")), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(20).mean(), name="20D MA", line=dict(dash='dash')), row=1, col=1)
-            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.2)"), row=2, col=1)
-            fig.update_layout(height=500, template="plotly_white", margin=dict(t=10, b=10), hovermode="x unified")
+            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.4)"), row=2, col=1)
+            fig.update_layout(height=500, margin=dict(t=10, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True)
             
             # Indicators
@@ -249,21 +267,21 @@ elif st.session_state.page == "analysis":
                 fr.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color="purple")))
                 fr.add_hline(y=70, line_dash="dash", line_color="red")
                 fr.add_hline(y=30, line_dash="dash", line_color="green")
-                fr.update_layout(height=250, template="plotly_white", margin=dict(t=0,b=0))
+                fr.update_layout(height=250, margin=dict(t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fr, use_container_width=True)
             with c2:
                 st.caption("MACD Momentum")
                 fm = go.Figure()
                 fm.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color="blue")))
                 fm.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal", line=dict(color="orange")))
-                fm.update_layout(height=250, template="plotly_white", margin=dict(t=0,b=0))
+                fm.update_layout(height=250, margin=dict(t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fm, use_container_width=True)
 
             # Info Tabs
             t1, t2 = st.tabs(["📄 Company Profile", "📅 1-Month Data"])
             with t1:
-                st.markdown(f"**Sector:** {info.get('sector', 'N/A')} | **Industry:** {info.get('industry', 'N/A')}")
-                st.write(info.get('longBusinessSummary', "Full summary unavailable."))
+                st.markdown(f"**Sector:** {info.get('sector')} | **Industry:** {info.get('industry')}")
+                st.write(info.get('longBusinessSummary'))
             with t2:
                 st.dataframe(df.tail(30).iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"), use_container_width=True)
 
@@ -277,11 +295,22 @@ elif st.session_state.page == "analysis":
                     with st.spinner("Computing..."):
                         preds = perform_ml(df, days)
                         with p2:
+                            # Using matplotlib with transparent background to match system theme
                             fig_p, ax_p = plt.subplots(figsize=(10, 5))
+                            fig_p.patch.set_alpha(0.0)
+                            ax_p.patch.set_alpha(0.0)
+                            
+                            # Adapt text color based on Streamlit's theme context if needed
+                            # Setting neutral colors for axes that work reasonably well on both
+                            ax_p.tick_params(colors='gray')
+                            for spine in ax_p.spines.values():
+                                spine.set_edgecolor('gray')
+                                
                             ctx = df.tail(60)
                             ax_p.plot(ctx.index.tz_localize(None), ctx['Close'], label='History', color='#007bff')
                             ax_p.plot(preds['Date'], preds['Price'], 'ro--', label='Forecast', markersize=4)
-                            ax_p.legend(); st.pyplot(fig_p)
+                            ax_p.legend()
+                            st.pyplot(fig_p)
                         st.write("### Predicted Timeline")
                         st.dataframe(preds.style.format({"Price": "${:,.2f}"}), use_container_width=True)
 
