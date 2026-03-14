@@ -57,14 +57,29 @@ st.markdown("""
         text-align: center;
         border: 1px solid rgba(128, 128, 128, 0.2);
     }
+    
+    /* Social Links - List and Text Properties */
+    .social-list {
+        list-style-type: none;
+        padding: 0;
+        margin: 20px 0 0 0;
+    }
+    .social-list li {
+        margin-bottom: 12px;
+    }
     .social-btn {
-        display: inline-block;
-        padding: 10px 20px;
-        margin: 5px;
+        display: block;
+        padding: 12px 20px;
         border-radius: 8px;
-        text-decoration: none;
+        text-decoration: none !important;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
         font-weight: bold;
         color: white !important;
+        transition: opacity 0.3s ease;
+    }
+    .social-btn:hover {
+        opacity: 0.85;
     }
     .github { background-color: #333; }
     .linkedin { background-color: #0077b5; }
@@ -216,11 +231,11 @@ if st.session_state.page == "home":
                 <h3>👨‍💻 About the Developer</h3>
                 <p><b>Ravi Kumar Vishwakarma</b><br>Computer Science Student | AKS University</p>
                 <p>Passionate about FinTech, AI, and building data-driven web applications.</p>
-                <div style="margin-top: 20px;">
-                    <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
-                    <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
-                    <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
-                </div>
+                <ul class="social-list">
+                    <li><a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a></li>
+                    <li><a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a></li>
+                    <li><a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a></li>
+                </ul>
             </div>
         """, unsafe_allow_html=True)
 
@@ -234,7 +249,8 @@ elif st.session_state.page == "analysis":
     # Search Input & Period Selector
     s1, s2, s3 = st.columns([4, 2, 1])
     with s1:
-        ticker = st.text_input("Search Ticker Symbol (e.g., AAPL, MSFT, BTC-USD)").upper().strip()
+        ticker = st.text_input("Search Ticker Symbol (e.g., AAPL, MSFT, BTC-USD)", value="AAPL").upper().strip()
+        search_btn = st.button("🔍 Search", type="primary")  # Added search button directly below the ticker
     with s2:
         period_choice = st.selectbox("Select Time Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
     with s3:
