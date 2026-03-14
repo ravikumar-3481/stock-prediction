@@ -1,5 +1,6 @@
 import streamlit as st
 import yfinance as yf
+import finnhub
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -40,7 +41,7 @@ st.markdown("""
         box-shadow: 0 10px 30px rgba(0,123,255,0.2);
     }
     .feature-card {
-        background: rgba(128, 128, 128, 0.05); /* Adaptive background */
+        background: rgba(128, 128, 128, 0.05);
         padding: 25px;
         border-radius: 15px;
         border-left: 5px solid #007bff;
@@ -48,7 +49,7 @@ st.markdown("""
         margin-bottom: 20px;
     }
     .dev-card {
-        background: rgba(128, 128, 128, 0.08); /* Adaptive background */
+        background: rgba(128, 128, 128, 0.08);
         padding: 30px;
         border-radius: 20px;
         text-align: center;
@@ -69,53 +70,93 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- ROBUST DATA ENGINE ---
+# --- ROBUST DATA ENGINE (YFINANCE + FINNHUB) ---
 @st.cache_data(ttl=600)
-def get_stock_data(ticker):
+def get_stock_data(ticker, finnhub_api_key=""):
     try:
-        # Download price data
+        # 1. Download price data using yfinance (most reliable for D1 historical data)
         data = yf.download(ticker, period="1y", interval="1d", progress=False)
         if data.empty:
-            return None, None, "Ticker not found or no data available."
+            return None, None, "Ticker not found or no historical data available."
         
-        # Clean columns
+        # Clean columns if they are MultiIndex
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
-        # Attempt to get info with robust error handling for missing yfinance data
-        t_obj = yf.Ticker(ticker)
-        try:
-            raw_info = t_obj.info
-            if not isinstance(raw_info, dict):
-                raw_info = {}
-        except Exception:
-            raw_info = {}
-            
-        # Create safe dictionary with all required details defaulting properly
+        # 2. Base Info Dictionary
         info = {
-            "longName": raw_info.get("longName", raw_info.get("shortName", ticker)),
-            "sector": raw_info.get("sector", "N/A"),
-            "industry": raw_info.get("industry", "N/A"),
-            "longBusinessSummary": raw_info.get("longBusinessSummary", "Company profile metadata is currently limited or unavailable via the API."),
-            "fiftyTwoWeekHigh": raw_info.get("fiftyTwoWeekHigh", 0.0),
-            "fiftyTwoWeekLow": raw_info.get("fiftyTwoWeekLow", 0.0)
+            "longName": ticker,
+            "sector": "N/A",
+            "industry": "N/A",
+            "longBusinessSummary": "Company profile metadata is currently unavailable.",
+            "marketCap": "N/A",
+            "fiftyTwoWeekHigh": 0.0,
+            "fiftyTwoWeekLow": 0.0
         }
         
-        # Format Market Cap cleanly
-        mc = raw_info.get("marketCap", "N/A")
-        if isinstance(mc, (int, float)):
-            if mc >= 1e12:
-                info["marketCap"] = f"${mc/1e12:.2f}T"
-            elif mc >= 1e9:
-                info["marketCap"] = f"${mc/1e9:.2f}B"
-            elif mc >= 1e6:
-                info["marketCap"] = f"${mc/1e6:.2f}M"
-            else:
-                info["marketCap"] = f"${mc:,.2f}"
-        else:
-            info["marketCap"] = str(mc)
+        finnhub_success = False
+        
+        # 3. Try fetching from Finnhub first if API Key is provided
+        if finnhub_api_key.strip():
+            try:
+                fh_client = finnhub.Client(api_key=finnhub_api_key.strip())
+                
+                # Fetch Company Profile
+                fh_profile = fh_client.company_profile2(symbol=ticker)
+                if fh_profile and 'name' in fh_profile:
+                    info["longName"] = fh_profile.get("name", ticker)
+                    info["sector"] = fh_profile.get("finnhubIndustry", "N/A")
+                    info["industry"] = fh_profile.get("finnhubIndustry", "N/A")
+                    
+                    # Finnhub returns Market Cap in Millions
+                    mc_millions = fh_profile.get("marketCapitalization", 0)
+                    if mc_millions > 0:
+                        mc = mc_millions * 1e6
+                        if mc >= 1e12:
+                            info["marketCap"] = f"${mc/1e12:.2f}T"
+                        elif mc >= 1e9:
+                            info["marketCap"] = f"${mc/1e9:.2f}B"
+                        else:
+                            info["marketCap"] = f"${mc/1e6:.2f}M"
+                    
+                    finnhub_success = True
+                
+                # Fetch Basic Financials for 52W High/Low
+                fh_metrics = fh_client.company_basic_financials(ticker, 'all')
+                if fh_metrics and 'metric' in fh_metrics:
+                    info["fiftyTwoWeekHigh"] = fh_metrics['metric'].get('52WeekHigh', 0.0)
+                    info["fiftyTwoWeekLow"] = fh_metrics['metric'].get('52WeekLow', 0.0)
+                    
+            except Exception as e:
+                pass # Proceed to yfinance fallback
+                
+        # 4. Yfinance Fallback (If Finnhub key missing or data empty)
+        if not finnhub_success:
+            t_obj = yf.Ticker(ticker)
+            try:
+                raw_info = t_obj.info
+                if isinstance(raw_info, dict):
+                    info["longName"] = raw_info.get("longName", raw_info.get("shortName", info["longName"]))
+                    info["sector"] = raw_info.get("sector", info["sector"])
+                    info["industry"] = raw_info.get("industry", info["industry"])
+                    info["longBusinessSummary"] = raw_info.get("longBusinessSummary", info["longBusinessSummary"])
+                    info["fiftyTwoWeekHigh"] = raw_info.get("fiftyTwoWeekHigh", info["fiftyTwoWeekHigh"])
+                    info["fiftyTwoWeekLow"] = raw_info.get("fiftyTwoWeekLow", info["fiftyTwoWeekLow"])
+                    
+                    mc = raw_info.get("marketCap", 0)
+                    if isinstance(mc, (int, float)) and mc > 0:
+                        if mc >= 1e12:
+                            info["marketCap"] = f"${mc/1e12:.2f}T"
+                        elif mc >= 1e9:
+                            info["marketCap"] = f"${mc/1e9:.2f}B"
+                        elif mc >= 1e6:
+                            info["marketCap"] = f"${mc/1e6:.2f}M"
+                        else:
+                            info["marketCap"] = f"${mc:,.2f}"
+            except Exception:
+                pass
             
-        # Technical Indicators
+        # 5. Calculate Technical Indicators
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -183,7 +224,7 @@ if st.session_state.page == "home":
         <div class="feature-card">
             <h3>🌟 Why Choose AI Pro?</h3>
             <ul>
-                <li><b>Live Data:</b> Accurate real-time synchronization with global exchanges.</li>
+                <li><b>Dual Data Engines:</b> Utilizes Finnhub & YFinance for highest accuracy.</li>
                 <li><b>No-Lag Engine:</b> Optimized data fetching to bypass rate limits.</li>
                 <li><b>Predictive Power:</b> Uses Linear Regression to find the market's true momentum.</li>
                 <li><b>Clean UI:</b> Distraction-free interface designed for desktop and mobile.</li>
@@ -218,6 +259,11 @@ elif st.session_state.page == "analysis":
     n1.title("📈 Analysis Terminal")
     n2.button("🏠 Home", on_click=lambda: nav_to("home"))
     
+    # Finnhub API Key Input (Optional but recommended)
+    with st.expander("⚙️ API Configuration (Optional)"):
+        st.info("Using Finnhub ensures accurate Company Data (Market Cap, Name, Sector). Without it, the app will fall back to YFinance.")
+        user_finnhub_key = st.text_input("Enter Finnhub API Key:", type="password", placeholder="Paste key here...")
+    
     # Search Input
     s1, s2 = st.columns([5, 1])
     with s1:
@@ -228,7 +274,7 @@ elif st.session_state.page == "analysis":
 
     if ticker:
         with st.spinner("Processing Market Data..."):
-            df, info, err = get_stock_data(ticker)
+            df, info, err = get_stock_data(ticker, user_finnhub_key)
         
         if err:
             st.error(f"⚠️ {err}")
@@ -248,18 +294,17 @@ elif st.session_state.page == "analysis":
             m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh'):,.2f}")
             m4.metric("52W Low", f"${info.get('fiftyTwoWeekLow'):,.2f}")
             
-            # Graphs
+            # Graphs - Set back to White Background
             st.subheader("Technical Analysis Suite")
             
-            # Adapt Plotly to current theme (remove white template so it's transparent)
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color="#007bff")), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(20).mean(), name="20D MA", line=dict(dash='dash')), row=1, col=1)
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.4)"), row=2, col=1)
-            fig.update_layout(height=500, margin=dict(t=10, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            fig.update_layout(height=500, margin=dict(t=10, b=10), hovermode="x unified", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
             
-            # Indicators
+            # Indicators - Set back to White Background
             c1, c2 = st.columns(2)
             with c1:
                 st.caption("RSI (Relative Strength Index)")
@@ -267,14 +312,14 @@ elif st.session_state.page == "analysis":
                 fr.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color="purple")))
                 fr.add_hline(y=70, line_dash="dash", line_color="red")
                 fr.add_hline(y=30, line_dash="dash", line_color="green")
-                fr.update_layout(height=250, margin=dict(t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fr.update_layout(height=250, margin=dict(t=0,b=0), template="plotly_white")
                 st.plotly_chart(fr, use_container_width=True)
             with c2:
                 st.caption("MACD Momentum")
                 fm = go.Figure()
                 fm.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color="blue")))
                 fm.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal", line=dict(color="orange")))
-                fm.update_layout(height=250, margin=dict(t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fm.update_layout(height=250, margin=dict(t=0,b=0), template="plotly_white")
                 st.plotly_chart(fm, use_container_width=True)
 
             # Info Tabs
@@ -295,16 +340,10 @@ elif st.session_state.page == "analysis":
                     with st.spinner("Computing..."):
                         preds = perform_ml(df, days)
                         with p2:
-                            # Using matplotlib with transparent background to match system theme
+                            # White background for Matplotlib
                             fig_p, ax_p = plt.subplots(figsize=(10, 5))
-                            fig_p.patch.set_alpha(0.0)
-                            ax_p.patch.set_alpha(0.0)
-                            
-                            # Adapt text color based on Streamlit's theme context if needed
-                            # Setting neutral colors for axes that work reasonably well on both
-                            ax_p.tick_params(colors='gray')
-                            for spine in ax_p.spines.values():
-                                spine.set_edgecolor('gray')
+                            fig_p.patch.set_facecolor('white')
+                            ax_p.set_facecolor('white')
                                 
                             ctx = df.tail(60)
                             ax_p.plot(ctx.index.tz_localize(None), ctx['Close'], label='History', color='#007bff')
