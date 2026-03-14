@@ -249,7 +249,7 @@ elif st.session_state.page == "analysis":
     # Search Input & Period Selector
     s1, s2, s3 = st.columns([4, 2, 1])
     with s1:
-        ticker = st.text_input("Search Ticker Symbol (e.g., AAPL, MSFT, BTC-USD)").upper().strip()
+        ticker = st.text_input("Search Ticker Symbol" , placeholder = "(e.g., AAPL, MSFT, BTC-USD)").upper().strip()
         search_btn = st.button("🔍 Search", type="primary")  # Added search button directly below the ticker
     with s2:
         period_choice = st.selectbox("Select Time Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
