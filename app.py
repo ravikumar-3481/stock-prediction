@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from sklearn.linear_model import LinearRegression
 from datetime import datetime, timedelta
 
@@ -14,211 +15,194 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- APP STATE MANAGEMENT ---
-# Using session_state to navigate between Home and Dashboard without Sidebar
+# --- SESSION STATE FOR NAVIGATION ---
 if 'page' not in st.session_state:
     st.session_state.page = "home"
 
-def go_to_analysis():
-    st.session_state.page = "analysis"
+def nav_to(page_name):
+    st.session_state.page = page_name
 
-def go_to_home():
-    st.session_state.page = "home"
-
-# --- FIXED CUSTOM CSS ---
+# --- STYLING ---
 st.markdown("""
     <style>
-    .main {
-        background-color: #f8f9fa;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3.5em;
-        font-weight: bold;
-        transition: 0.3s;
-    }
-    .hero-text {
-        text-align: center;
-        padding: 20px;
-    }
-    .metric-card {
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        text-align: center;
-    }
-    /* Hide Sidebar for cleaner mobile look */
-    [data-testid="stSidebarNav"] {display: none;}
+    .stApp { background-color: #fcfcfc; }
+    .main-header { text-align: center; padding: 40px 0; background: linear-gradient(90deg, #007bff, #6610f2); color: white; border-radius: 15px; margin-bottom: 30px; }
+    .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; transition: all 0.3s; }
+    .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #eee; }
+    [data-testid="stSidebar"] { display: none; } /* Hide Sidebar */
     </style>
     """, unsafe_allow_html=True)
 
-# --- DATA LOADING FUNCTIONS ---
-@st.cache_data(ttl=600) # Cache for 10 mins
-def fetch_stock_data(ticker):
+# --- ANALYTICS FUNCTIONS ---
+@st.cache_data(ttl=600)
+def get_full_stock_info(ticker):
     try:
-        # We use a fixed 1y period for analysis to ensure stability
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="1y")
+        t = yf.Ticker(ticker)
+        df = t.history(period="1y")
+        if df.empty: return None, None, "No data found."
         
-        if df is None or df.empty:
-            return None, "No data returned from Yahoo Finance."
+        # Calculate RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1+rs))
         
-        # Clean column names
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        return df, None
+        # Calculate MACD
+        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        return df, t.info, None
     except Exception as e:
-        return None, str(e)
+        return None, None, str(e)
 
-def perform_prediction(df, days):
+def ml_predict(df, days):
     df_ml = df.reset_index()[['Date', 'Close']].copy()
     df_ml['Date'] = pd.to_datetime(df_ml['Date']).dt.tz_localize(None)
-    df_ml['Date_Ordinal'] = df_ml['Date'].apply(lambda x: x.toordinal())
+    df_ml['Ordinal'] = df_ml['Date'].apply(lambda x: x.toordinal())
     
-    X = df_ml[['Date_Ordinal']].values
-    y = df_ml['Close'].values
-
     model = LinearRegression()
-    model.fit(X, y)
-
+    model.fit(df_ml[['Ordinal']].values, df_ml['Close'].values)
+    
     last_date = df_ml['Date'].iloc[-1]
-    future_dates = [last_date + timedelta(days=i) for i in range(1, days + 1)]
-    future_dates_ordinal = np.array([d.toordinal() for d in future_dates]).reshape(-1, 1)
+    f_dates = [last_date + timedelta(days=i) for i in range(1, days + 1)]
+    f_ordinals = np.array([d.toordinal() for d in f_dates]).reshape(-1, 1)
+    preds = model.predict(f_ordinals)
     
-    predictions = model.predict(future_dates_ordinal)
-    
-    return pd.DataFrame({
-        'Date': future_dates, 
-        'Predicted_Price': predictions.flatten()
-    })
+    return pd.DataFrame({'Date': f_dates, 'Price': preds})
 
-# --- PAGE: HOME ---
+# --- HOME SCREEN ---
 if st.session_state.page == "home":
-    st.markdown("<div class='hero-text'>", unsafe_allow_html=True)
-    st.title("📈 StockTrend AI Pro")
-    st.subheader("Advanced Stock Forecasting & Market Analysis")
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-header'><h1>📈 StockTrend AI Pro</h1><p>Professional Market Analysis & Future Forecasting</p></div>", unsafe_allow_html=True)
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
+    c1, c2 = st.columns([2, 1])
+    with c1:
         st.markdown("""
-        ### Welcome to the Future of Trading Analysis
-        This platform provides users with real-time financial insights and predictive modeling to help 
-        understand market trends better.
+        ### 🚀 Welcome to the Pro Terminal
+        This web application is designed for traders and analysts who need quick, data-driven insights. 
+        It uses **Yahoo Finance** for real-time market data and **Scikit-Learn** for trend forecasting.
         
-        #### 🚀 Key Features:
-        * **Real-time Data:** Instant access to global stock markets.
-        * **Interactive Analytics:** Visualise price movements with technical indicators.
-        * **Machine Learning:** Predict future price trends using Linear Regression.
-        * **Historical Review:** Deep dive into 1-month historical price logs.
-        
-        #### 📖 How to Use:
-        1. Click the **Launch Dashboard** button below.
-        2. Enter a valid stock ticker (e.g., `AAPL` for Apple, `TSLA` for Tesla).
-        3. Review the historical charts and price metrics.
-        4. Select a forecast duration and hit **Predict** to see future trends.
+        #### 🛠️ Key Features:
+        - **Company Profile:** Auto-detects company name, sector, and business summary.
+        - **Technical Suite:** Interactive Price, Volume, RSI, and MACD charts.
+        - **ML Engine:** One-click Linear Regression prediction for up to 90 days.
+        - **Data Integrity:** Detailed 30-day historical transaction logs.
         """)
-        
-        st.button("🚀 Launch Analysis Dashboard", on_click=go_to_analysis, type="primary")
-
-    with col2:
-        st.info("💡 **Pro Tip:** For Indian stocks, use the `.NS` suffix (e.g., `RELIANCE.NS`). For Crypto, use `-USD` (e.g., `BTC-USD`).")
-        st.success("""
-        **System Status:**
-        - API Connection: Online ✅
-        - ML Engine: Ready ✅
-        - Data Source: Yahoo Finance
-        """)
-
-# --- PAGE: ANALYSIS ---
-elif st.session_state.page == "analysis":
-    # Top Navigation Bar
-    n1, n2 = st.columns([8, 2])
-    with n1:
-        st.title("📊 Market Analysis Dashboard")
-    with n2:
-        st.button("🏠 Back to Home", on_click=go_to_home)
+        st.button("🎯 Open Analysis Dashboard", on_click=lambda: nav_to("analysis"), type="primary")
     
-    # Input Area
-    input_col1, input_col2 = st.columns([3, 1])
-    with input_col1:
-        ticker_symbol = st.text_input("Enter Stock Ticker Symbol", value="AAPL", help="Enter symbols like AAPL, MSFT, or GOOGL").upper().strip()
-    with input_col2:
-        st.write(" ") # Padding
-        refresh = st.button("🔄 Refresh Data")
+    with c2:
+        st.info("💡 **Supported Markets:** USA (AAPL), India (RELIANCE.NS), Crypto (BTC-USD), and more.")
+        st.markdown("""
+        <div class='card'>
+        <h4>System Specs</h4>
+        <hr>
+        <li>Refresh Rate: 10 Mins</li>
+        <li>ML Model: Linear Reg</li>
+        <li>Data: Real-time API</li>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if ticker_symbol:
-        df, error_msg = fetch_stock_data(ticker_symbol)
+# --- ANALYSIS SCREEN ---
+elif st.session_state.page == "analysis":
+    # Top Nav
+    h1, h2 = st.columns([8, 2])
+    with h1: st.title("📊 Market Terminal")
+    with h2: st.button("🏠 Home", on_click=lambda: nav_to("home"))
+    
+    # Search Bar
+    s1, s2 = st.columns([4, 1])
+    with s1: 
+        ticker = st.text_input("Search Stock Ticker Symbol", value="AAPL").upper().strip()
+    with s2:
+        st.write("") # Spacer
+        search_btn = st.button("🔍 Search")
+
+    if ticker:
+        df, info, err = get_full_stock_info(ticker)
         
         if df is not None:
-            # Current Price Metrics
-            last_price = float(df['Close'].iloc[-1])
-            prev_price = float(df['Close'].iloc[-2])
-            change = last_price - prev_price
-            pct_change = (change / prev_price) * 100
+            # HEADER SECTION
+            comp_name = info.get('longName', ticker)
+            st.header(f"{comp_name} ({ticker})")
+            
+            # QUICK METRICS
+            last_p = float(df['Close'].iloc[-1])
+            change = last_p - float(df['Close'].iloc[-2])
+            pct = (change / float(df['Close'].iloc[-2])) * 100
             
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Current Price", f"${last_price:,.2f}", f"{change:+.2f} ({pct_change:+.2f}%)")
-            m2.metric("Day High", f"${float(df['High'].iloc[-1]):,.2f}")
-            m3.metric("Day Low", f"${float(df['Low'].iloc[-1]):,.2f}")
-            m4.metric("Volume", f"{int(df['Volume'].iloc[-1]):,}")
-
-            # Visualization Tabs
-            t1, t2 = st.tabs(["📉 Price Trend Graph", "📅 Historical List (30 Days)"])
+            m1.metric("Current Price", f"${last_p:,.2f}", f"{change:+.2f} ({pct:+.2f}%)")
+            m2.metric("Market Cap", info.get('marketCap', 'N/A'))
+            m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 0):,.2f}")
+            m4.metric("52W Low", f"${info.get('fiftyTwoWeekLow', 0):,.2f}")
             
-            with t1:
-                df['MA20'] = df['Close'].rolling(window=20).mean()
-                df['MA50'] = df['Close'].rolling(window=50).mean()
-                
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color='#007bff', width=2.5)))
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20D MA", line=dict(dash='dash', color='#ffa500')))
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], name="50D MA", line=dict(dash='dot', color='#28a745')))
-                
-                fig.update_layout(height=500, template="plotly_white", margin=dict(l=0,r=0,t=20,b=0), hovermode="x unified")
-                st.plotly_chart(fig, use_container_width=True)
-
-            with t2:
-                st.subheader("Last 30 Trading Days")
-                history_30 = df.tail(30).iloc[::-1] # Newest first
-                st.dataframe(history_30[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"), use_container_width=True)
-
-            # Prediction Section
+            # GRAPHS SECTION
             st.divider()
-            st.header("🤖 AI Price Prediction")
+            st.subheader("📈 Technical Analysis Suite")
             
-            pred_col1, pred_col2 = st.columns([1, 2])
-            with pred_col1:
-                st.write("Select the number of days you want to forecast into the future.")
-                days_to_predict = st.slider("Forecast Days", 1, 60, 15)
-                predict_trigger = st.button("🔮 Predict Future Price", type="primary")
+            # 1. Price & Volume (Combined)
+            fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+            fig1.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color="#007bff")), row=1, col=1)
+            fig1.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(20).mean(), name="20D MA", line=dict(dash='dash')), row=1, col=1)
+            fig1.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.3)"), row=2, col=1)
+            fig1.update_layout(height=500, template="plotly_white", margin=dict(t=10, b=10))
+            st.plotly_chart(fig1, use_container_width=True)
+            
+            # 2. RSI & MACD
+            g1, g2 = st.columns(2)
+            with g1:
+                st.caption("Relative Strength Index (RSI)")
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color="purple")))
+                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+                fig_rsi.update_layout(height=250, template="plotly_white", margin=dict(t=0, b=0))
+                st.plotly_chart(fig_rsi, use_container_width=True)
+            with g2:
+                st.caption("MACD Momentum")
+                fig_macd = go.Figure()
+                fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color="blue")))
+                fig_macd.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal", line=dict(color="orange")))
+                fig_macd.update_layout(height=250, template="plotly_white", margin=dict(t=0, b=0))
+                st.plotly_chart(fig_macd, use_container_width=True)
 
-            if predict_trigger:
-                with st.spinner("Analyzing market momentum..."):
-                    pred_df = perform_prediction(df, days_to_predict)
-                    
-                    with pred_col2:
-                        # Prediction Chart
-                        fig_ml, ax_ml = plt.subplots(figsize=(10, 5))
-                        hist_context = df.tail(60)
-                        ax_ml.plot(hist_context.index.tz_localize(None), hist_context['Close'], label='Recent History', color='#007bff', linewidth=2)
-                        ax_ml.plot(pred_df['Date'], pred_df['Predicted_Price'], 'ro--', label='AI Forecast', markersize=4)
-                        ax_ml.set_title(f"Forecast for {ticker_symbol}")
-                        ax_ml.legend()
-                        plt.grid(True, alpha=0.3)
-                        st.pyplot(fig_ml)
-                    
-                    st.success(f"Prediction for {days_to_predict} days completed!")
-                    st.dataframe(pred_df.style.format({"Predicted_Price": "${:,.2f}"}), use_container_width=True)
+            # COMPANY INFO & HISTORY TABS
+            t1, t2 = st.tabs(["📄 Company Profile", "📅 30-Day Historical Log"])
+            with t1:
+                st.markdown(f"""
+                **Sector:** {info.get('sector', 'N/A')} | **Industry:** {info.get('industry', 'N/A')}
+                
+                **Summary:** {info.get('longBusinessSummary', 'No description available.')}
+                """)
+            with t2:
+                st.dataframe(df.tail(30).iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"), use_container_width=True)
+
+            # PREDICTION SECTION
+            st.divider()
+            st.subheader("🤖 AI Price Prediction (Linear Regression)")
+            p1, p2 = st.columns([1, 2])
+            with p1:
+                st.write("Determine the projected price based on linear growth analysis.")
+                days = st.slider("Select Prediction Days", 1, 90, 30)
+                btn = st.button("🔮 Run AI Prediction", type="primary")
+            
+            if btn:
+                with st.spinner("Calculating Trend..."):
+                    pdf = ml_predict(df, days)
+                    with p2:
+                        fig_p, ax_p = plt.subplots(figsize=(10, 5))
+                        ax_p.plot(df.tail(60).index.tz_localize(None), df.tail(60)['Close'], label='History', color='#007bff')
+                        ax_p.plot(pdf['Date'], pdf['Price'], 'ro--', label='Predicted', markersize=4)
+                        ax_p.set_title("Future Momentum Forecast")
+                        ax_p.legend()
+                        st.pyplot(fig_p)
+                    st.dataframe(pdf.style.format({"Price": "${:,.2f}"}), use_container_width=True)
 
         else:
-            st.error(f"❌ Error: {error_msg}")
-            st.info("Check if the ticker is correct. Example: AAPL, TSLA, or RELIANCE.NS")
+            st.error(f"Error fetching '{ticker}': {err}")
 
-# --- FOOTER ---
+# FOOTER
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: grey;'>Developed by Ravi | AKS University | © 2026 StockTrend AI</div>", unsafe_allow_html=True)
+st.markdown("<center><small>Developed by Ravi Kumar | StockTrend AI v2.0 | Powered by Streamlit</small></center>", unsafe_allow_html=True)
