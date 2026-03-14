@@ -242,12 +242,12 @@ if st.session_state.page == "home":
         st.markdown(f"""
             <div class="dev-card">
                 <h3>👨‍💻 About the Developer</h3>
-                <p><b>Ravi Kumar</b><br>Computer Science Student | AKS University</p>
+                <p><b>Ravi Kumar Vishwakarma</b><br>Computer Science Student | AKS University</p>
                 <p>Passionate about FinTech, AI, and building data-driven web applications.</p>
                 <div style="margin-top: 20px;">
-                    <a href="https://github.com" target="_blank" class="social-btn github">GitHub</a>
-                    <a href="https://linkedin.com" target="_blank" class="social-btn linkedin">LinkedIn</a>
-                    <a href="#" target="_blank" class="social-btn portfolio">Portfolio</a>
+                    <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
+                    <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
+                    <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -260,9 +260,7 @@ elif st.session_state.page == "analysis":
     n2.button("🏠 Home", on_click=lambda: nav_to("home"))
     
     # Finnhub API Key Input (Optional but recommended)
-    with st.expander("⚙️ API Configuration (Optional)"):
-        st.info("Using Finnhub ensures accurate Company Data (Market Cap, Name, Sector). Without it, the app will fall back to YFinance.")
-        user_finnhub_key = st.text_input("Enter Finnhub API Key:", type="password", placeholder="Paste key here...")
+  
     
     # Search Input
     s1, s2 = st.columns([5, 1])
