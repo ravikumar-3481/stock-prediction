@@ -15,7 +15,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS FOR STYLING ---
+# --- FIXED CUSTOM CSS ---
+# Changed 'unsafe_all_projects' to 'unsafe_allow_html'
 st.markdown("""
     <style>
     .main {
@@ -27,6 +28,7 @@ st.markdown("""
         height: 3em;
         background-color: #007bff;
         color: white;
+        font-weight: bold;
     }
     .metric-container {
         background-color: white;
@@ -35,24 +37,32 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     </style>
-    """, unsafe_all_projects=True)
+    """, unsafe_allow_html=True)
 
 # --- DATA LOADING FUNCTIONS ---
 @st.cache_data(ttl=3600)
 def fetch_stock_data(ticker, period="1y"):
     try:
         stock = yf.Ticker(ticker)
+        # We fetch a bit more data to calculate moving averages properly
         df = stock.history(period=period)
         if df.empty:
             return None, None
+        
+        # Ensure column names are clean (sometimes yfinance returns MultiIndex)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         return df, stock.info
-    except Exception as e:
+    except Exception:
         return None, None
 
 def perform_prediction(df, days):
-    # Prepare data
-    df_ml = df.reset_index()[['Date', 'Close']]
-    df_ml['Date_Ordinal'] = df_ml['Date'].map(datetime.toordinal)
+    # Prepare data for Linear Regression
+    df_ml = df.reset_index()[['Date', 'Close']].copy()
+    # Remove timezone info for ordinal conversion
+    df_ml['Date'] = pd.to_datetime(df_ml['Date']).dt.tz_localize(None)
+    df_ml['Date_Ordinal'] = df_ml['Date'].apply(lambda x: x.toordinal())
     
     X = df_ml[['Date_Ordinal']].values
     y = df_ml['Close'].values
@@ -75,123 +85,133 @@ def perform_prediction(df, days):
     return pred_df
 
 # --- SIDEBAR NAVIGATION ---
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["🏠 Home", "📊 Stock Analysis & Prediction"])
+st.sidebar.title("📌 Menu")
+page = st.sidebar.radio("Navigate to:", ["🏠 Home", "📊 Stock Analysis & Prediction"])
 
 # --- HOME PAGE ---
 if page == "🏠 Home":
-    st.title("🚀 Welcome to StockTrend AI Pro")
-    st.markdown("### Your Intelligent Companion for Market Analysis")
+    st.title("🚀 StockTrend AI Pro")
+    st.subheader("Your Intelligent Market Analysis Dashboard")
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.write("""
-        This professional-grade web application leverages **Machine Learning** and **Real-time Market Data** to help investors visualize trends and forecast future stock movements.
+        st.markdown("""
+        ### Why use this App?
+        Predicting the stock market is complex, but visualizing data shouldn't be. This app combines 
+        **Real-time Financial Data** with **Linear Regression AI** to provide a clear view of market momentum.
         
-        #### ✨ Core Features:
-        - **Live Data Integration:** Fetches real-time data directly from Yahoo Finance.
-        - **Trend Visualization:** Interactive charts with Moving Averages (20-day & 50-day).
-        - **Deep History:** View detailed tabular data for the last month.
-        - **ML Forecasting:** Uses Linear Regression to predict price trajectories based on historical momentum.
+        #### 🌟 Key Features:
+        - **Live Dashboard:** Real-time metrics for High, Low, and Current prices.
+        - **Smart Visuals:** Interactive charts featuring 20-day and 50-day Moving Averages.
+        - **Full History:** Access to the last 30 days of trading records.
+        - **Future Forecast:** Predict where the stock is headed based on historical price action.
         """)
         
-        st.info("💡 **How to use:** Navigate to the 'Stock Analysis' page using the sidebar, enter a stock symbol (like AAPL or TSLA), and explore the data!")
+        st.info("💡 **Ready to start?** Switch to the 'Stock Analysis' page in the sidebar and enter a ticker like **AAPL, TSLA, or MSFT**.")
 
     with col2:
         st.success("""
-        #### 🛠️ Tech Stack:
-        - **Streamlit** (UI Framework)
-        - **YFinance** (Data Source)
-        - **Scikit-Learn** (Prediction Model)
-        - **Plotly & Matplotlib** (Charts)
+        #### ⚙️ How it Works:
+        1. **Data:** Fetched via YFinance API.
+        2. **Process:** Data is cleaned and smoothed.
+        3. **AI:** Linear Regression analyzes the trend line.
+        4. **Result:** Forecasted prices for your selected period.
         """)
     
-    if st.button("Get Started →"):
-        st.info("Please select 'Stock Analysis' from the sidebar to begin.")
+    st.divider()
+    st.markdown("Developed by **Ravi** | AKS University")
 
 # --- ANALYSIS & PREDICTION PAGE ---
 elif page == "📊 Stock Analysis & Prediction":
-    st.title("Market Analysis Dashboard")
+    st.title("Market Analysis & ML Prediction")
     
-    # User Inputs in Sidebar
+    # User Inputs
     st.sidebar.header("Search Parameters")
-    ticker_symbol = st.sidebar.text_input("Enter Stock Ticker", value="AAPL").upper()
-    data_period = st.sidebar.selectbox("Analysis Horizon", ["1y", "2y", "5y", "max"])
+    ticker_input = st.sidebar.text_input("Enter Stock Ticker", value="AAPL").upper().strip()
+    data_horizon = st.sidebar.selectbox("History Period", ["1y", "2y", "5y", "max"])
     
-    if ticker_symbol:
-        with st.spinner(f"Analyzing {ticker_symbol}..."):
-            df, info = fetch_stock_data(ticker_symbol, data_period)
+    if ticker_input:
+        with st.spinner(f"Fetching data for {ticker_input}..."):
+            df, info = fetch_stock_data(ticker_input, data_horizon)
             
-        if df is not None:
-            # 1. Top Level Metrics
-            last_price = df['Close'].iloc[-1]
-            prev_price = df['Close'].iloc[-2]
+        if df is not None and not df.empty:
+            # 1. Dashboard Metrics
+            # Ensure values are float to avoid st.metric errors
+            last_price = float(df['Close'].iloc[-1])
+            prev_price = float(df['Close'].iloc[-2])
             change = last_price - prev_price
             pct_change = (change / prev_price) * 100
             
             m1, m2, m3 = st.columns(3)
             with m1:
-                st.metric("Current Price", f"${last_price:,.2f}", f"{change:+.2f} ({pct_change:+.2f}%)")
+                st.metric("Last Price", f"${last_price:,.2f}", f"{change:+.2f} ({pct_change:+.2f}%)")
             with m2:
-                st.metric("52 Week High", f"${df['High'].max():,.2f}")
+                st.metric("Period High", f"${float(df['High'].max()):,.2f}")
             with m3:
-                st.metric("52 Week Low", f"${df['Low'].min():,.2f}")
+                st.metric("Period Low", f"${float(df['Low'].min()):,.2f}")
 
-            # 2. Historical Data Tabs
-            tab1, tab2 = st.tabs(["📈 Price Chart", "📋 1-Month History"])
+            # 2. Tabs for visualization and table
+            tab1, tab2 = st.tabs(["📊 Interactive Trend Chart", "📜 Last 30 Days History"])
             
             with tab1:
-                st.subheader("Historical Trend with Moving Averages")
+                st.subheader(f"Price Trend: {ticker_input}")
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA50'] = df['Close'].rolling(window=50).mean()
                 
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Close Price", line=dict(color='#1f77b4')))
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20D MA", line=dict(dash='dash', color='orange')))
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], name="50D MA", line=dict(dash='dot', color='green')))
-                fig.update_layout(height=500, template="plotly_white", xaxis_title="Date", yaxis_title="Price (USD)")
+                fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color='#007bff', width=2)))
+                fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="20D MA (Fast)", line=dict(dash='dash', color='orange')))
+                fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], name="50D MA (Slow)", line=dict(dash='dot', color='green')))
+                
+                fig.update_layout(
+                    height=450, 
+                    template="plotly_white", 
+                    hovermode="x unified",
+                    margin=dict(l=0, r=0, t=30, b=0)
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
-                st.subheader("Last 30 Days Record")
-                last_month = df.tail(30).sort_index(ascending=False)
-                st.dataframe(last_month[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"))
+                st.subheader("Historical Data Table")
+                # Show only 1 month of history as requested
+                recent_data = df.tail(30).iloc[::-1] # Reverse to show newest first
+                st.dataframe(recent_data[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"), use_container_width=True)
 
-            # 3. Prediction Section
+            # 3. Prediction Module
             st.divider()
-            st.header("🤖 Artificial Intelligence Forecasting")
+            st.header("🤖 AI Forecast Analysis")
             
-            p_col1, p_col2 = st.columns([1, 2])
+            p1, p2 = st.columns([1, 2])
             
-            with p_col1:
-                st.write("Configure your prediction model settings below.")
-                days = st.number_input("Days to Forecast", min_value=1, max_value=365, value=30)
-                predict_btn = st.button("🔮 Run Prediction Model")
+            with p1:
+                st.write("Predict future prices based on linear trend analysis.")
+                forecast_days = st.slider("Prediction Horizon (Days)", 1, 90, 15)
+                run_ml = st.button("🔮 Calculate Forecast")
             
-            if predict_btn:
-                with st.spinner("Calculating future trends..."):
-                    pred_df = perform_prediction(df, days)
+            if run_ml:
+                with st.spinner("Training Model..."):
+                    pred_results = perform_prediction(df, forecast_days)
                     
-                    with p_col2:
-                        # Visualization of Prediction
-                        fig_pred, ax_pred = plt.subplots(figsize=(10, 5))
-                        # Plot actual last 90 days
-                        recent = df.tail(90)
-                        ax_pred.plot(recent.index, recent['Close'], label='Historical', color='#1f77b4', linewidth=2)
-                        # Plot prediction
-                        ax_pred.plot(pred_df['Date'], pred_df['Predicted_Price'], '--', label='Predicted', color='red', marker='o', markersize=4)
+                    with p2:
+                        # Visualization
+                        fig_ml, ax_ml = plt.subplots(figsize=(10, 5))
+                        # Use last 60 days of real data for context
+                        context = df.tail(60)
+                        ax_ml.plot(context.index.tz_localize(None), context['Close'], label='Actual History', color='#007bff', linewidth=2)
+                        ax_ml.plot(pred_results['Date'], pred_results['Predicted_Price'], 'ro--', label='Predicted Path', markersize=4, alpha=0.7)
                         
-                        ax_pred.set_title(f"{ticker_symbol} Future Forecast")
-                        ax_pred.legend()
-                        plt.grid(alpha=0.3)
-                        st.pyplot(fig_pred)
+                        ax_ml.set_title(f"Momentum Forecast for {ticker_input}")
+                        ax_ml.legend()
+                        plt.xticks(rotation=45)
+                        plt.grid(True, linestyle='--', alpha=0.5)
+                        st.pyplot(fig_ml)
                     
-                    st.success(f"Successfully generated forecast for {days} days.")
-                    st.table(pred_df.head(10)) # Show first 10 predicted days
+                    st.success(f"Forecast for next {forecast_days} days generated successfully!")
+                    st.dataframe(pred_results.style.format({"Predicted_Price": "${:,.2f}"}), use_container_width=True)
         else:
-            st.error(f"Ticker '{ticker_symbol}' not found. Please check the symbol (e.g., AAPL, MSFT, BTC-USD).")
+            st.warning(f"Unable to find data for '{ticker_input}'. Please check the ticker symbol.")
 
 # --- FOOTER ---
 st.sidebar.markdown("---")
-st.sidebar.info("Developed by Ravi | AKS University\nPowered by Streamlit & Scikit-Learn")
+st.sidebar.caption("© 2026 Ravi Kumar | StockTrend AI")
