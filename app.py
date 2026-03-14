@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import PolynomialFeatures
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVR
 from datetime import datetime, timedelta
@@ -72,7 +72,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- ROBUST DATA ENGINE (YFINANCE) ---
+# --- ROBUST DATA ENGINE (YFINANCE PURELY) ---
 @st.cache_data(ttl=600)
 def get_stock_data(ticker, period="1y"):
     try:
@@ -81,10 +81,15 @@ def get_stock_data(ticker, period="1y"):
         if data.empty:
             return None, "Ticker not found or no historical data available."
         
-        # Clean columns if they are MultiIndex
+        # Clean columns if they are MultiIndex (common in newer yfinance versions)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
+        # Ensure we have the required columns
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col not in data.columns:
+                return None, f"Data missing required column: {col}"
+
         # Calculate Technical Indicators
         # RSI
         delta = data['Close'].diff()
@@ -104,9 +109,15 @@ def get_stock_data(ticker, period="1y"):
         data['Upper Band'] = data['20 SMA'] + (data['20 STD'] * 2)
         data['Lower Band'] = data['20 SMA'] - (data['20 STD'] * 2)
         
+        # Drop NaNs to clean up the charts
+        data.dropna(inplace=True)
+        
+        if data.empty:
+            return None, "Not enough data to calculate technical indicators."
+
         return data, None
     except Exception as e:
-        return None, str(e)
+        return None, f"Error fetching data: {str(e)}"
 
 def perform_ml(df, days, model_type):
     # Prepare data using days index for better scaling across different models
@@ -116,34 +127,32 @@ def perform_ml(df, days, model_type):
     # Select and configure the model
     if model_type == "Linear Regression":
         model = LinearRegression()
+        model.fit(X, y)
+        future_X = np.arange(len(df), len(df) + days).reshape(-1, 1)
+        preds = model.predict(future_X)
+        
     elif model_type == "Polynomial Regression (Deg 2)":
         model = make_pipeline(PolynomialFeatures(2), LinearRegression())
+        model.fit(X, y)
+        future_X = np.arange(len(df), len(df) + days).reshape(-1, 1)
+        preds = model.predict(future_X)
+        
     elif model_type == "Support Vector Regression (SVR)":
-        from sklearn.preprocessing import StandardScaler
         # SVR requires feature scaling for good results
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
         X_scaled = scaler_X.fit_transform(X)
         y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).ravel()
+        
         model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
         model.fit(X_scaled, y_scaled)
-    
-    # Fit the model (for non-SVR models)
-    if model_type != "Support Vector Regression (SVR)":
-        model.fit(X, y)
-    
-    # Generate future indices
-    future_X = np.arange(len(df), len(df) + days).reshape(-1, 1)
-    
-    # Predict
-    if model_type == "Support Vector Regression (SVR)":
+        
+        future_X = np.arange(len(df), len(df) + days).reshape(-1, 1)
         future_X_scaled = scaler_X.transform(future_X)
         preds_scaled = model.predict(future_X_scaled)
         preds = scaler_y.inverse_transform(preds_scaled.reshape(-1, 1)).ravel()
-    else:
-        preds = model.predict(future_X)
     
-    # Map to dates
+    # Map back to future dates
     last_date = df.index[-1]
     f_dates = [last_date + timedelta(days=i) for i in range(1, days + 1)]
     return pd.DataFrame({'Date': f_dates, 'Price': preds})
@@ -241,13 +250,18 @@ elif st.session_state.page == "analysis":
         elif df is not None:
             st.header(f"Ticker: {ticker}")
             
-            # Key Metrics (Updated as requested)
+            # Key Metrics calculation
             last_close = float(df['Close'].iloc[-1])
             last_open = float(df['Open'].iloc[-1])
-            prev_close = float(df['Close'].iloc[-2]) if len(df) > 1 else last_open
-            chg = last_close - prev_close
-            pct = (chg / prev_close) * 100
             
+            if len(df) > 1:
+                prev_close = float(df['Close'].iloc[-2])
+                chg = last_close - prev_close
+                pct = (chg / prev_close) * 100
+            else:
+                chg = 0.0
+                pct = 0.0
+                
             period_high = float(df['High'].max())
             period_low = float(df['Low'].min())
             
@@ -257,7 +271,7 @@ elif st.session_state.page == "analysis":
             m3.metric("Period High", f"${period_high:,.2f}")
             m4.metric("Period Low", f"${period_low:,.2f}")
             
-            # Graphs - Strict White Background
+            # --- MAIN CHARTS ---
             st.subheader("Technical Analysis Suite")
             
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
@@ -271,21 +285,22 @@ elif st.session_state.page == "analysis":
             # Volume
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.4)"), row=2, col=1)
             
-            # Force White Background explicitly
+            # Force Absolute White Background and Black Fonts (fixes dark mode rendering issues)
             fig.update_layout(
                 height=550, 
                 margin=dict(t=10, b=10), 
                 hovermode="x unified",
                 plot_bgcolor='white',
                 paper_bgcolor='white',
-                xaxis=dict(showgrid=True, gridcolor='lightgray'),
-                yaxis=dict(showgrid=True, gridcolor='lightgray'),
-                xaxis2=dict(showgrid=True, gridcolor='lightgray'),
-                yaxis2=dict(showgrid=True, gridcolor='lightgray')
+                font=dict(color='black'),
+                xaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black'),
+                yaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black'),
+                xaxis2=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black'),
+                yaxis2=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black')
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Indicators - Strict White Background
+            # --- INDICATORS ---
             c1, c2 = st.columns(2)
             with c1:
                 st.caption("RSI (Relative Strength Index)")
@@ -295,9 +310,9 @@ elif st.session_state.page == "analysis":
                 fr.add_hline(y=30, line_dash="dash", line_color="green")
                 fr.update_layout(
                     height=250, margin=dict(t=0,b=0), 
-                    plot_bgcolor='white', paper_bgcolor='white',
-                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
-                    yaxis=dict(showgrid=True, gridcolor='lightgray')
+                    plot_bgcolor='white', paper_bgcolor='white', font=dict(color='black'),
+                    xaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black'),
+                    yaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black')
                 )
                 st.plotly_chart(fr, use_container_width=True)
             with c2:
@@ -307,17 +322,20 @@ elif st.session_state.page == "analysis":
                 fm.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal", line=dict(color="orange")))
                 fm.update_layout(
                     height=250, margin=dict(t=0,b=0), 
-                    plot_bgcolor='white', paper_bgcolor='white',
-                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
-                    yaxis=dict(showgrid=True, gridcolor='lightgray')
+                    plot_bgcolor='white', paper_bgcolor='white', font=dict(color='black'),
+                    xaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black'),
+                    yaxis=dict(showgrid=True, gridcolor='#f0f0f0', linecolor='black')
                 )
                 st.plotly_chart(fm, use_container_width=True)
 
-            # Data Table & Export
+            # --- DATA TABLE & EXPORT ---
             st.markdown("### 🗃️ Raw Historical Data")
             d1, d2 = st.columns([8, 2])
             with d1:
-                st.dataframe(df.iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format({"Open": "${:,.2f}", "High": "${:,.2f}", "Low": "${:,.2f}", "Close": "${:,.2f}"}), use_container_width=True, height=200)
+                # Format to $ for table
+                st.dataframe(df.iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format({
+                    "Open": "${:,.2f}", "High": "${:,.2f}", "Low": "${:,.2f}", "Close": "${:,.2f}"
+                }), use_container_width=True, height=200)
             with d2:
                 csv = df.to_csv().encode('utf-8')
                 st.download_button(
@@ -328,7 +346,7 @@ elif st.session_state.page == "analysis":
                     use_container_width=True
                 )
 
-            # Prediction Module
+            # --- PREDICTION MODULE ---
             st.divider()
             st.subheader("🤖 AI Price Prediction Suite")
             p1, p2 = st.columns([1, 2])
@@ -347,20 +365,24 @@ elif st.session_state.page == "analysis":
                         preds = perform_ml(df, days, ml_model)
                         
                         with p2:
-                            # White background for Matplotlib explicitly
+                            # Strict White background for Matplotlib
                             fig_p, ax_p = plt.subplots(figsize=(10, 5))
                             fig_p.patch.set_facecolor('white')
                             ax_p.set_facecolor('white')
                                 
-                            # Plot last 100 days for context
+                            # Plot last 100 days for visual context
                             ctx = df.tail(100)
                             ax_p.plot(ctx.index.tz_localize(None), ctx['Close'], label='History', color='#007bff', linewidth=2)
                             ax_p.plot(preds['Date'], preds['Price'], 'r--', label=f'{ml_model} Forecast', linewidth=2)
                             
                             ax_p.set_title(f"{ticker} - {days} Day Forecast", color='black')
                             ax_p.tick_params(colors='black')
-                            ax_p.grid(color='lightgray', linestyle='--', linewidth=0.5)
-                            ax_p.legend(facecolor='white', edgecolor='black', labelcolor='black')
+                            ax_p.grid(color='#f0f0f0', linestyle='--', linewidth=0.5)
+                            
+                            # Styling legend
+                            legend = ax_p.legend(facecolor='white', edgecolor='black', labelcolor='black')
+                            frame = legend.get_frame()
+                            frame.set_facecolor('white')
                             
                             st.pyplot(fig_p)
                             
