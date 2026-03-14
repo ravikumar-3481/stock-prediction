@@ -29,45 +29,21 @@ def nav_to(page_name):
 # --- CUSTOM STYLING ---
 st.markdown("""
     <style>
-    /* Global Overrides for Article Layout */
+    /* Hide Sidebar */
     [data-testid="stSidebar"] { display: none; }
     
-    .main-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin-bottom: 0.5rem;
-        color: #1E1E1E;
-    }
-    .article-header {
-        font-size: 1.8rem;
-        font-weight: 700;
-        margin-top: 2.5rem;
-        margin-bottom: 1rem;
-        border-bottom: 2px solid #F0F2F6;
-        padding-bottom: 0.5rem;
-    }
-    .article-body {
-        font-size: 1.1rem;
-        line-height: 1.7;
-        color: #31333F;
-        text-align: justify;
-    }
+    /* Tech Tags styling */
     .tech-tag {
         display: inline-block;
-        background: #F0F2F6;
-        padding: 4px 12px;
-        border-radius: 15px;
-        margin: 4px;
-        font-size: 0.9rem;
+        background: rgba(128, 128, 128, 0.1);
+        padding: 5px 15px;
+        border-radius: 20px;
+        margin: 5px;
         font-weight: 500;
+        font-size: 0.9rem;
     }
-    .dev-section {
-        margin-top: 4rem;
-        padding: 2rem;
-        background: #F8F9FB;
-        border-radius: 10px;
-    }
-    /* Social Links */
+    
+    /* Social Buttons styling */
     .social-list {
         list-style: none;
         padding: 0;
@@ -76,12 +52,14 @@ st.markdown("""
         margin-top: 15px;
     }
     .social-btn {
-        padding: 8px 16px;
-        border-radius: 5px;
+        padding: 10px 20px;
+        border-radius: 8px;
         text-decoration: none;
         font-weight: bold;
         color: white !important;
+        transition: opacity 0.2s;
     }
+    .social-btn:hover { opacity: 0.8; }
     .github { background: #333; }
     .linkedin { background: #0077b5; }
     .portfolio { background: #e84393; }
@@ -99,7 +77,7 @@ def get_stock_data(ticker, period="1y"):
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
-        # Calculate Indicators
+        # Indicators
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -149,101 +127,86 @@ def perform_ml(df, days, model_type):
     f_dates = [last_date + timedelta(days=i) for i in range(1, days + 1)]
     return pd.DataFrame({'Date': f_dates, 'Price': preds})
 
-# --- PAGE: HOME (ARTICLE LAYOUT) ---
+# --- PAGE: HOME (STANDARD LAYOUT) ---
 if st.session_state.page == "home":
-    col_left, col_mid, col_right = st.columns([1, 8, 1])
-    
-    with col_mid:
-        st.markdown('<h1 class="main-title">StockTrend AI Pro</h1>', unsafe_allow_html=True)
-        st.markdown('**Next-Generation Market Intelligence & Predictive Analytics**')
-        st.divider()
+    # Hero Title
+    st.title("🚀 StockTrend AI Pro")
+    st.subheader("Next-Generation Market Intelligence & Predictive Analytics")
+    st.divider()
 
-        # Project Overview
-        st.markdown('<div class="article-header">Project Overview</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="article-body">
+    # Main Grid for Project Information
+    col1, col2 = st.columns(2, gap="large")
+
+    with col1:
+        st.header("Project Overview")
+        st.write("""
         StockTrend AI Pro is an advanced financial monitoring terminal designed to bridge the gap between complex 
         quantitative analysis and individual retail investors. By leveraging real-time market data APIs and 
         machine learning algorithms, the platform transforms raw historical price action into actionable 
-        visual intelligence. The project focuses on high-performance technical indicators and non-linear 
-        forecasting models to provide a holistic view of market momentum.
-        </div>
-        """, unsafe_allow_html=True)
+        visual intelligence.
+        """)
 
-        # Problem Statement
-        st.markdown('<div class="article-header">The Challenge: Data Overload & Market Noise</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="article-body">
-        Modern financial markets generate billions of data points every second. Retail traders often face three primary obstacles:
-        1. <b>Information Asymmetry:</b> Institutional traders have access to proprietary AI models that retail investors lack.
-        2. <b>Technical Complexity:</b> Calculating advanced indicators like MACD, RSI, and Bollinger Bands manually is prone to error and time-consuming.
-        3. <b>Predictive Uncertainty:</b> Moving averages only show the past; investors need a mathematical approach to estimate future price trajectories based on existing volatility patterns.
-        </div>
-        """, unsafe_allow_html=True)
+        st.header("The Challenge: Data Overload")
+        st.write("""
+        Modern financial markets generate billions of data points. Retail traders often face:
+        * **Information Asymmetry:** Lack of institutional-grade AI models.
+        * **Technical Complexity:** Difficulty in manual technical indicator calculation.
+        * **Predictive Uncertainty:** Moving averages only show the past, not the future.
+        """)
 
-        # Solution
-        st.markdown('<div class="article-header">The Solution: Integrated Intelligence</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="article-body">
-        This project solves these challenges by providing a centralized, automated analysis pipeline. 
-        It fetches live data directly from global exchanges, performs on-the-fly technical computations, 
-        and applies Scikit-Learn based regression models to project future trends. By automating the 
-        "Math of Trading," it allows users to focus on strategy rather than calculation.
-        </div>
-        """, unsafe_allow_html=True)
+        st.header("The Solution")
+        st.write("""
+        This project provides a centralized, automated analysis pipeline. It fetches live data from global 
+        exchanges, performs technical computations, and applies regression models to project future trends, 
+        allowing users to focus on strategy rather than math.
+        """)
 
-        # Uniqueness
-        st.markdown('<div class="article-header">What Makes This Unique?</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="article-body">
-        Unlike standard stock trackers, StockTrend AI Pro offers:
-        <ul>
-            <li><b>Hybrid Analytics:</b> It combines traditional "Chartist" indicators with modern Machine Learning.</li>
-            <li><b>Dynamic Forecast Horizons:</b> Users can customize ML prediction windows from 1 to 90 days.</li>
-            <li><b>Algorithm Comparison:</b> Direct comparison between Linear, Polynomial, and SVR models to see how different mathematical assumptions impact price targets.</li>
-            <li><b>Pure Performance:</b> Built on Streamlit's reactive framework for near-zero latency in data rendering.</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
+    with col2:
+        st.header("Unique Value Proposition")
+        st.write("""
+        * **Hybrid Analytics:** Combines traditional indicators with modern ML.
+        * **Dynamic Forecasts:** Customize prediction windows from 1 to 90 days.
+        * **Algorithm Comparison:** Compare Linear, Polynomial, and SVR models.
+        * **Reactive Performance:** High-speed rendering for real-time decision making.
+        """)
 
-        # Technologies
-        st.markdown('<div class="article-header">Technology Stack</div>', unsafe_allow_html=True)
+        st.header("Technology Stack")
         st.markdown("""
-            <span class="tech-tag">Python 3.10+</span>
+            <span class="tech-tag">Python 3.10</span>
             <span class="tech-tag">Streamlit</span>
-            <span class="tech-tag">Scikit-Learn (ML)</span>
+            <span class="tech-tag">Scikit-Learn</span>
             <span class="tech-tag">YFinance API</span>
-            <span class="tech-tag">Plotly Interactive</span>
-            <span class="tech-tag">Pandas & NumPy</span>
-            <span class="tech-tag">Matplotlib</span>
+            <span class="tech-tag">Plotly</span>
+            <span class="tech-tag">Pandas</span>
+            <span class="tech-tag">NumPy</span>
         """, unsafe_allow_html=True)
 
-        # How to Use
-        st.markdown('<div class="article-header">How to Use the Terminal</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="article-body">
-        1. Navigate to the <b>Analysis Terminal</b> using the button below.<br>
-        2. Enter a ticker symbol (e.g., 'NVDA' for NVIDIA, 'BTC-USD' for Bitcoin).<br>
-        3. Observe the Technical Suite showing the 20-day SMA and Bollinger Bands.<br>
-        4. Scroll down to the <b>AI Prediction Suite</b>, select a model (SVR is recommended for volatile stocks), and hit 'Run AI Model'.
-        </div>
-        """, unsafe_allow_html=True)
+        st.header("How to Use")
+        st.write("""
+        1. Click the **Get Started** button below.
+        2. Enter a symbol like **AAPL**, **TSLA**, or **BTC-USD**.
+        3. Analyze the technical charts and volume data.
+        4. Select an AI model to forecast future price movements.
+        """)
 
-        st.write("")
-        st.button("🚀 Launch Analysis Terminal", on_click=lambda: nav_to("analysis"), type="primary", use_container_width=True)
+    # CTA Button
+    st.write("---")
+    st.button("🎯 Get Started - Open Analysis Terminal", on_click=lambda: nav_to("analysis"), type="primary", use_container_width=True)
 
-        # Developer Section
+    # Developer Section at the bottom
+    st.write("---")
+    dev_col1, dev_col2 = st.columns([1, 2])
+    with dev_col1:
+        st.header("About the Developer")
+    with dev_col2:
+        st.write("**Ravi Kumar Vishwakarma**")
+        st.write("Computer Science Engineering Student | AKS University")
+        st.write("Specializing in AI and Data Engineering.")
         st.markdown("""
-            <div class="dev-section">
-                <h3>About the Developer</h3>
-                <p><b>Ravi Kumar Vishwakarma</b><br>
-                Computer Science Engineering Student | AKS University<br>
-                Specializing in AI and Data Engineering.</p>
-                <div class="social-list">
-                    <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
-                    <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
-                    <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
-                </div>
+            <div class="social-list">
+                <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
+                <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
+                <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
             </div>
         """, unsafe_allow_html=True)
 
