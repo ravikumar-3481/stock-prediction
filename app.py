@@ -1,12 +1,14 @@
 import streamlit as st
 import yfinance as yf
-import finnhub
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import make_pipeline
+from sklearn.svm import SVR
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIGURATION ---
@@ -70,119 +72,80 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- ROBUST DATA ENGINE (YFINANCE + FINNHUB) ---
+# --- ROBUST DATA ENGINE (YFINANCE) ---
 @st.cache_data(ttl=600)
-def get_stock_data(ticker, finnhub_api_key=""):
+def get_stock_data(ticker, period="1y"):
     try:
-        # 1. Download price data using yfinance (most reliable for D1 historical data)
-        data = yf.download(ticker, period="1y", interval="1d", progress=False)
+        # Download price data using yfinance
+        data = yf.download(ticker, period=period, interval="1d", progress=False)
         if data.empty:
-            return None, None, "Ticker not found or no historical data available."
+            return None, "Ticker not found or no historical data available."
         
         # Clean columns if they are MultiIndex
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
-        # 2. Base Info Dictionary
-        info = {
-            "longName": ticker,
-            "sector": "N/A",
-            "industry": "N/A",
-            "longBusinessSummary": "Company profile metadata is currently unavailable.",
-            "marketCap": "N/A",
-            "fiftyTwoWeekHigh": 0.0,
-            "fiftyTwoWeekLow": 0.0
-        }
-        
-        finnhub_success = False
-        
-        # 3. Try fetching from Finnhub first if API Key is provided
-        if finnhub_api_key.strip():
-            try:
-                fh_client = finnhub.Client(api_key=finnhub_api_key.strip())
-                
-                # Fetch Company Profile
-                fh_profile = fh_client.company_profile2(symbol=ticker)
-                if fh_profile and 'name' in fh_profile:
-                    info["longName"] = fh_profile.get("name", ticker)
-                    info["sector"] = fh_profile.get("finnhubIndustry", "N/A")
-                    info["industry"] = fh_profile.get("finnhubIndustry", "N/A")
-                    
-                    # Finnhub returns Market Cap in Millions
-                    mc_millions = fh_profile.get("marketCapitalization", 0)
-                    if mc_millions > 0:
-                        mc = mc_millions * 1e6
-                        if mc >= 1e12:
-                            info["marketCap"] = f"${mc/1e12:.2f}T"
-                        elif mc >= 1e9:
-                            info["marketCap"] = f"${mc/1e9:.2f}B"
-                        else:
-                            info["marketCap"] = f"${mc/1e6:.2f}M"
-                    
-                    finnhub_success = True
-                
-                # Fetch Basic Financials for 52W High/Low
-                fh_metrics = fh_client.company_basic_financials(ticker, 'all')
-                if fh_metrics and 'metric' in fh_metrics:
-                    info["fiftyTwoWeekHigh"] = fh_metrics['metric'].get('52WeekHigh', 0.0)
-                    info["fiftyTwoWeekLow"] = fh_metrics['metric'].get('52WeekLow', 0.0)
-                    
-            except Exception as e:
-                pass # Proceed to yfinance fallback
-                
-        # 4. Yfinance Fallback (If Finnhub key missing or data empty)
-        if not finnhub_success:
-            t_obj = yf.Ticker(ticker)
-            try:
-                raw_info = t_obj.info
-                if isinstance(raw_info, dict):
-                    info["longName"] = raw_info.get("longName", raw_info.get("shortName", info["longName"]))
-                    info["sector"] = raw_info.get("sector", info["sector"])
-                    info["industry"] = raw_info.get("industry", info["industry"])
-                    info["longBusinessSummary"] = raw_info.get("longBusinessSummary", info["longBusinessSummary"])
-                    info["fiftyTwoWeekHigh"] = raw_info.get("fiftyTwoWeekHigh", info["fiftyTwoWeekHigh"])
-                    info["fiftyTwoWeekLow"] = raw_info.get("fiftyTwoWeekLow", info["fiftyTwoWeekLow"])
-                    
-                    mc = raw_info.get("marketCap", 0)
-                    if isinstance(mc, (int, float)) and mc > 0:
-                        if mc >= 1e12:
-                            info["marketCap"] = f"${mc/1e12:.2f}T"
-                        elif mc >= 1e9:
-                            info["marketCap"] = f"${mc/1e9:.2f}B"
-                        elif mc >= 1e6:
-                            info["marketCap"] = f"${mc/1e6:.2f}M"
-                        else:
-                            info["marketCap"] = f"${mc:,.2f}"
-            except Exception:
-                pass
-            
-        # 5. Calculate Technical Indicators
+        # Calculate Technical Indicators
+        # RSI
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         data['RSI'] = 100 - (100 / (1 + (gain / loss)))
         
+        # MACD
         exp12 = data['Close'].ewm(span=12, adjust=False).mean()
         exp26 = data['Close'].ewm(span=26, adjust=False).mean()
         data['MACD'] = exp12 - exp26
         data['Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
         
-        return data, info, None
+        # Bollinger Bands
+        data['20 SMA'] = data['Close'].rolling(window=20).mean()
+        data['20 STD'] = data['Close'].rolling(window=20).std()
+        data['Upper Band'] = data['20 SMA'] + (data['20 STD'] * 2)
+        data['Lower Band'] = data['20 SMA'] - (data['20 STD'] * 2)
+        
+        return data, None
     except Exception as e:
-        return None, None, str(e)
+        return None, str(e)
 
-def perform_ml(df, days):
-    df_ml = df.reset_index()[['Date', 'Close']].copy()
-    df_ml['Date'] = pd.to_datetime(df_ml['Date']).dt.tz_localize(None)
-    df_ml['Ordinal'] = df_ml['Date'].apply(lambda x: x.toordinal())
+def perform_ml(df, days, model_type):
+    # Prepare data using days index for better scaling across different models
+    X = np.arange(len(df)).reshape(-1, 1)
+    y = df['Close'].values
     
-    model = LinearRegression()
-    model.fit(df_ml[['Ordinal']].values, df_ml['Close'].values)
+    # Select and configure the model
+    if model_type == "Linear Regression":
+        model = LinearRegression()
+    elif model_type == "Polynomial Regression (Deg 2)":
+        model = make_pipeline(PolynomialFeatures(2), LinearRegression())
+    elif model_type == "Support Vector Regression (SVR)":
+        from sklearn.preprocessing import StandardScaler
+        # SVR requires feature scaling for good results
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
+        X_scaled = scaler_X.fit_transform(X)
+        y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).ravel()
+        model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
+        model.fit(X_scaled, y_scaled)
     
-    last_date = df_ml['Date'].iloc[-1]
+    # Fit the model (for non-SVR models)
+    if model_type != "Support Vector Regression (SVR)":
+        model.fit(X, y)
+    
+    # Generate future indices
+    future_X = np.arange(len(df), len(df) + days).reshape(-1, 1)
+    
+    # Predict
+    if model_type == "Support Vector Regression (SVR)":
+        future_X_scaled = scaler_X.transform(future_X)
+        preds_scaled = model.predict(future_X_scaled)
+        preds = scaler_y.inverse_transform(preds_scaled.reshape(-1, 1)).ravel()
+    else:
+        preds = model.predict(future_X)
+    
+    # Map to dates
+    last_date = df.index[-1]
     f_dates = [last_date + timedelta(days=i) for i in range(1, days + 1)]
-    f_ordinals = np.array([d.toordinal() for d in f_dates]).reshape(-1, 1)
-    preds = model.predict(f_ordinals)
     return pd.DataFrame({'Date': f_dates, 'Price': preds})
 
 # --- PAGE: HOME ---
@@ -213,8 +176,8 @@ if st.session_state.page == "home":
             <ol>
                 <li>Click <b>'Get Started'</b> to open the terminal.</li>
                 <li>Enter any global ticker (e.g., <b>AAPL</b>, <b>TSLA</b>, or <b>RELIANCE.NS</b>).</li>
-                <li>Analyze interactive charts, RSI, and MACD indicators.</li>
-                <li>Use the ML slider to forecast prices for the next 90 days.</li>
+                <li>Analyze interactive charts, RSI, MACD, and Bollinger Bands.</li>
+                <li>Select from multiple AI models to forecast prices.</li>
             </ol>
         </div>
         """, unsafe_allow_html=True)
@@ -224,9 +187,9 @@ if st.session_state.page == "home":
         <div class="feature-card">
             <h3>🌟 Why Choose AI Pro?</h3>
             <ul>
-                <li><b>Dual Data Engines:</b> Utilizes Finnhub & YFinance for highest accuracy.</li>
-                <li><b>No-Lag Engine:</b> Optimized data fetching to bypass rate limits.</li>
-                <li><b>Predictive Power:</b> Uses Linear Regression to find the market's true momentum.</li>
+                <li><b>Pure Price Action:</b> Focused entirely on historical technical data.</li>
+                <li><b>Multiple Timeframes:</b> Analyze data from 1 month to 5 years.</li>
+                <li><b>Advanced AI Suite:</b> Features Linear, Polynomial, and SVR ML models.</li>
                 <li><b>Clean UI:</b> Distraction-free interface designed for desktop and mobile.</li>
             </ul>
         </div>
@@ -242,12 +205,12 @@ if st.session_state.page == "home":
         st.markdown(f"""
             <div class="dev-card">
                 <h3>👨‍💻 About the Developer</h3>
-                <p><b>Ravi Kumar Vishwakarma</b><br>Computer Science Student | AKS University</p>
+                <p><b>Ravi Kumar</b><br>Computer Science Student | AKS University</p>
                 <p>Passionate about FinTech, AI, and building data-driven web applications.</p>
                 <div style="margin-top: 20px;">
-                    <a href="https://github.com/ravikumar-3481" target="_blank" class="social-btn github">GitHub</a>
-                    <a href="https://www.linkedin.com/in/ravi-vishwakarma67" target="_blank" class="social-btn linkedin">LinkedIn</a>
-                    <a href="https://profileravi.netlify.app" target="_blank" class="social-btn portfolio">Portfolio</a>
+                    <a href="https://github.com" target="_blank" class="social-btn github">GitHub</a>
+                    <a href="https://linkedin.com" target="_blank" class="social-btn linkedin">LinkedIn</a>
+                    <a href="#" target="_blank" class="social-btn portfolio">Portfolio</a>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -259,50 +222,70 @@ elif st.session_state.page == "analysis":
     n1.title("📈 Analysis Terminal")
     n2.button("🏠 Home", on_click=lambda: nav_to("home"))
     
-    # Finnhub API Key Input (Optional but recommended)
-  
-    
-    # Search Input
-    s1, s2 = st.columns([5, 1])
+    # Search Input & Period Selector
+    s1, s2, s3 = st.columns([4, 2, 1])
     with s1:
         ticker = st.text_input("Search Ticker Symbol (e.g., AAPL, MSFT, BTC-USD)", value="AAPL").upper().strip()
     with s2:
+        period_choice = st.selectbox("Select Time Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
+    with s3:
         st.write("") # Spacer
-        st.button("🔄 Refresh")
+        st.button("🔄 Refresh", use_container_width=True)
 
     if ticker:
-        with st.spinner("Processing Market Data..."):
-            df, info, err = get_stock_data(ticker, user_finnhub_key)
+        with st.spinner(f"Processing Market Data for {ticker}..."):
+            df, err = get_stock_data(ticker, period=period_choice)
         
         if err:
             st.error(f"⚠️ {err}")
-            st.info("Tip: If you see 'Rate Limited', please wait 30 seconds and refresh.")
         elif df is not None:
-            # Identity
-            st.header(f"{info.get('longName')}")
+            st.header(f"Ticker: {ticker}")
             
-            # Key Metrics
-            lp = float(df['Close'].iloc[-1])
-            chg = lp - float(df['Close'].iloc[-2])
-            pct = (chg / float(df['Close'].iloc[-2])) * 100
+            # Key Metrics (Updated as requested)
+            last_close = float(df['Close'].iloc[-1])
+            last_open = float(df['Open'].iloc[-1])
+            prev_close = float(df['Close'].iloc[-2]) if len(df) > 1 else last_open
+            chg = last_close - prev_close
+            pct = (chg / prev_close) * 100
+            
+            period_high = float(df['High'].max())
+            period_low = float(df['Low'].min())
             
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Current Price", f"${lp:,.2f}", f"{chg:+.2f} ({pct:+.2f}%)")
-            m2.metric("Market Cap", info.get('marketCap'))
-            m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh'):,.2f}")
-            m4.metric("52W Low", f"${info.get('fiftyTwoWeekLow'):,.2f}")
+            m1.metric("Last Close", f"${last_close:,.2f}", f"{chg:+.2f} ({pct:+.2f}%)")
+            m2.metric("Last Open", f"${last_open:,.2f}")
+            m3.metric("Period High", f"${period_high:,.2f}")
+            m4.metric("Period Low", f"${period_low:,.2f}")
             
-            # Graphs - Set back to White Background
+            # Graphs - Strict White Background
             st.subheader("Technical Analysis Suite")
             
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+            
+            # Price and Bollinger Bands
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color="#007bff")), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(20).mean(), name="20D MA", line=dict(dash='dash')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['20 SMA'], name="20D SMA", line=dict(color="orange", dash='dash')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['Upper Band'], name="Upper BB", line=dict(color="rgba(128,128,128,0.3)", dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['Lower Band'], name="Lower BB", line=dict(color="rgba(128,128,128,0.3)", dash='dot'), fill='tonexty', fillcolor='rgba(128,128,128,0.1)'), row=1, col=1)
+            
+            # Volume
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(0,123,255,0.4)"), row=2, col=1)
-            fig.update_layout(height=500, margin=dict(t=10, b=10), hovermode="x unified", template="plotly_white")
+            
+            # Force White Background explicitly
+            fig.update_layout(
+                height=550, 
+                margin=dict(t=10, b=10), 
+                hovermode="x unified",
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                xaxis2=dict(showgrid=True, gridcolor='lightgray'),
+                yaxis2=dict(showgrid=True, gridcolor='lightgray')
+            )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Indicators - Set back to White Background
+            # Indicators - Strict White Background
             c1, c2 = st.columns(2)
             with c1:
                 st.caption("RSI (Relative Strength Index)")
@@ -310,45 +293,80 @@ elif st.session_state.page == "analysis":
                 fr.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color="purple")))
                 fr.add_hline(y=70, line_dash="dash", line_color="red")
                 fr.add_hline(y=30, line_dash="dash", line_color="green")
-                fr.update_layout(height=250, margin=dict(t=0,b=0), template="plotly_white")
+                fr.update_layout(
+                    height=250, margin=dict(t=0,b=0), 
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                    yaxis=dict(showgrid=True, gridcolor='lightgray')
+                )
                 st.plotly_chart(fr, use_container_width=True)
             with c2:
                 st.caption("MACD Momentum")
                 fm = go.Figure()
                 fm.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color="blue")))
                 fm.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal", line=dict(color="orange")))
-                fm.update_layout(height=250, margin=dict(t=0,b=0), template="plotly_white")
+                fm.update_layout(
+                    height=250, margin=dict(t=0,b=0), 
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                    yaxis=dict(showgrid=True, gridcolor='lightgray')
+                )
                 st.plotly_chart(fm, use_container_width=True)
 
-            # Info Tabs
-            t1, t2 = st.tabs(["📄 Company Profile", "📅 1-Month Data"])
-            with t1:
-                st.markdown(f"**Sector:** {info.get('sector')} | **Industry:** {info.get('industry')}")
-                st.write(info.get('longBusinessSummary'))
-            with t2:
-                st.dataframe(df.tail(30).iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format("${:,.2f}"), use_container_width=True)
+            # Data Table & Export
+            st.markdown("### 🗃️ Raw Historical Data")
+            d1, d2 = st.columns([8, 2])
+            with d1:
+                st.dataframe(df.iloc[::-1][['Open', 'High', 'Low', 'Close', 'Volume']].style.format({"Open": "${:,.2f}", "High": "${:,.2f}", "Low": "${:,.2f}", "Close": "${:,.2f}"}), use_container_width=True, height=200)
+            with d2:
+                csv = df.to_csv().encode('utf-8')
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv,
+                    file_name=f'{ticker}_historical_data.csv',
+                    mime='text/csv',
+                    use_container_width=True
+                )
 
-            # Prediction
+            # Prediction Module
             st.divider()
-            st.subheader("🤖 AI Price Prediction")
+            st.subheader("🤖 AI Price Prediction Suite")
             p1, p2 = st.columns([1, 2])
+            
             with p1:
-                days = st.slider("Forecast Days", 1, 90, 30)
-                if st.button("🔮 Run AI Model", type="primary"):
-                    with st.spinner("Computing..."):
-                        preds = perform_ml(df, days)
+                st.info("Select an algorithm to forecast future price movement based on historical trends.")
+                ml_model = st.selectbox("Select ML Model", [
+                    "Linear Regression", 
+                    "Polynomial Regression (Deg 2)", 
+                    "Support Vector Regression (SVR)"
+                ])
+                days = st.slider("Forecast Horizon (Days)", 1, 90, 30)
+                
+                if st.button("🔮 Run AI Model", type="primary", use_container_width=True):
+                    with st.spinner(f"Computing using {ml_model}..."):
+                        preds = perform_ml(df, days, ml_model)
+                        
                         with p2:
-                            # White background for Matplotlib
+                            # White background for Matplotlib explicitly
                             fig_p, ax_p = plt.subplots(figsize=(10, 5))
                             fig_p.patch.set_facecolor('white')
                             ax_p.set_facecolor('white')
                                 
-                            ctx = df.tail(60)
-                            ax_p.plot(ctx.index.tz_localize(None), ctx['Close'], label='History', color='#007bff')
-                            ax_p.plot(preds['Date'], preds['Price'], 'ro--', label='Forecast', markersize=4)
-                            ax_p.legend()
+                            # Plot last 100 days for context
+                            ctx = df.tail(100)
+                            ax_p.plot(ctx.index.tz_localize(None), ctx['Close'], label='History', color='#007bff', linewidth=2)
+                            ax_p.plot(preds['Date'], preds['Price'], 'r--', label=f'{ml_model} Forecast', linewidth=2)
+                            
+                            ax_p.set_title(f"{ticker} - {days} Day Forecast", color='black')
+                            ax_p.tick_params(colors='black')
+                            ax_p.grid(color='lightgray', linestyle='--', linewidth=0.5)
+                            ax_p.legend(facecolor='white', edgecolor='black', labelcolor='black')
+                            
                             st.pyplot(fig_p)
-                        st.write("### Predicted Timeline")
-                        st.dataframe(preds.style.format({"Price": "${:,.2f}"}), use_container_width=True)
+                            
+                        # Data table for predictions
+                        with p1:
+                            st.write("### Predicted Timeline")
+                            st.dataframe(preds.style.format({"Price": "${:,.2f}"}), use_container_width=True, height=250)
 
 st.markdown("<br><center><small>StockTrend AI Pro | Built with ❤️ by Ravi Kumar</small></center>", unsafe_allow_html=True)
